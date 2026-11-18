@@ -1,5 +1,5 @@
 
-name: Build Marzz Client Fabric JAR
+name: Build Marzz Client 1.21.11 Fabric
 
 on:
   workflow_dispatch:
@@ -7,12 +7,15 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Java 21
@@ -20,34 +23,37 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.14.3
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
 
-      - name: Extract ZIP and Detect Project
+      - name: Find and Extract ZIP
         shell: bash
         run: |
           set -euo pipefail
 
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit)"
+          ZIP_FILE="$(find . -maxdepth 1 -type f \
+            -iname '*.zip' -print -quit)"
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "::error::ZIP source tidak ditemukan"
+            echo "::error::ZIP source tidak ditemukan!"
             exit 1
           fi
 
-          echo "Source: $ZIP_FILE"
+          echo "ZIP ditemukan: $ZIP_FILE"
 
-          mkdir -p project
-          unzip -o "$ZIP_FILE" -d project
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
 
-          BUILD_FILE="$(find project -type f \
-            \( -name build.gradle -o -name build.gradle.kts \) \
+          BUILD_FILE="$(find extracted -type f \
+            \( -name 'build.gradle' -o -name 'build.gradle.kts' \) \
             -print -quit)"
 
           if [ -z "$BUILD_FILE" ]; then
-            echo "::error::Gradle build file tidak ditemukan"
+            echo "::error::build.gradle tidak ditemukan!"
+            find extracted -maxdepth 6 -type f
             exit 1
           fi
 
@@ -55,25 +61,66 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project ditemukan: $PROJECT_DIR"
+          echo "Project: $PROJECT_DIR"
 
-      - name: Compile Fabric Mod
+      - name: Check Minecraft Version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Target Minecraft: 1.21.11"
+          echo "Java:"
+          java -version
+
+          echo "Gradle:"
+          gradle --version
+
+          echo "Gradle configuration:"
+          grep -nE 'minecraft_version|minecraftVersion|fabric-loom|loom_version' \
+            "$PROJECT_DIR/gradle.properties" \
+            "$PROJECT_DIR/build.gradle" \
+            "$PROJECT_DIR/build.gradle.kts" 2>/dev/null || true
+
+      - name: Build Fabric Mod
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$PROJECT_DIR"
 
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew clean build --no-daemon
-          else
-            gradle clean build --no-daemon
+          gradle clean build \
+            -Pminecraft_version=1.21.11 \
+            --no-daemon \
+            --stacktrace
+
+      - name: Verify JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Mencari hasil JAR..."
+
+          find "$PROJECT_DIR" -type f \
+            -path '*/build/libs/*.jar' \
+            ! -name '*-sources.jar' \
+            ! -name '*-dev.jar' \
+            -print
+
+          if ! find "$PROJECT_DIR" -type f \
+            -path '*/build/libs/*.jar' \
+            ! -name '*-sources.jar' \
+            ! -name '*-dev.jar' | grep -q .; then
+            echo "::error::File JAR tidak berhasil dibuat!"
+            exit 1
           fi
 
-      - name: Upload Fabric JAR
+      - name: Upload Marzz Client JAR
         uses: actions/upload-artifact@v4
         with:
-          name: Marzz-Client-Fabric-JAR
-          path: project/**/build/libs/*.jar
+          name: Marzz-Client-1.21.11-Fabric
+          path: |
+            ${{ env.PROJECT_DIR }}/build/libs/*.jar
+            !${{ env.PROJECT_DIR }}/build/libs/*-sources.jar
+            !${{ env.PROJECT_DIR }}/build/libs/*-dev.jar
           if-no-files-found: error
+          compression-level: 0
